@@ -13,12 +13,14 @@
 
 *   **Полноценный UI в терминале:** Использование ANSI-последовательностей для отрисовки рамок, цветов и навигации.
 *   **Система вкладок:** Разделение настроек по страницам (например, Info, Wireless, Advanced).
+*   **Иерархические страницы и подменю**: Поддержка вложенных разделов (например, `Network -> Wi-Fi`), управляемых по нажатию клавиши `Enter`.
 *   **Типы данных:**
     *   `TYPE_INFO` — вывод статической информации.
     *   `TYPE_TEXT` — редактирование строк с модальным окном ввода.
     *   `TYPE_INT` — редактирование целых чисел.
     *   `TYPE_BOOL` — переключатели [Enabled/Disabled].
     *   `TYPE_SELECT` — выпадающие списки выбора.
+    *   `TYPE_DYNAMIC_SELECT` — Динамические списки, сканируемые «на лету».
     *   `TYPE_ACTION` — кнопки для выполнения функций (Save, Reset, etc).
 *   **Автоматическая страница Info:** Отображение модели чипа, объема Flash, свободной ОЗУ и времени работы (Uptime).
 *   **Гибкий брендинг:** Настройка заголовка шапки, названия продукта и версии.
@@ -44,70 +46,190 @@
 
 ## 📖 Быстрый старт
 
+> ⚠️ **Важно:** Встроенный Serial Monitor в Arduino IDE **не поддерживает** ANSI-терминал и псевдографику! Используйте сторонние терминалы, такие как **PuTTY** или **Tera Term** (скорость порта `115200`).
+
 ```cpp
-#include <GS32BIOS.h>
+#include <Arduino.h>
+#include "GS32BIOS.h"
 
 GS32BIOS bios;
 
-// Ваши переменные
-char device_name[32] = "Smart-Node-01";
-bool led_enabled = true;
-int operation_mode = 0;
-const char* modes[] = {"Normal", "Turbo", "Eco"};
+// Переменные для примера
+char ssidBuffer[32] = "MyHomeWiFi";
+int channelNum = 6;
+bool dhcpEnabled = true;
+int selectedAuthMode = 0;
+const char* authModes[] = {"Open", "WPA2-PSK", "WPA3-SAE", "WEE"};
+
+int selectedWifiNetwork = 0;
+bool customShellMode = false; // Флаг для демонстрации переключения на кастомный Shell
+
+// Демо-функция для динамического списка (сканирование сетей "на лету")
+std::vector<String> scanAvailableNetworks() {
+  std::vector<String> networks;
+  networks.push_back("Home_Net_5G (-45dBm)");
+  networks.push_back("Guest_WiFi (-62dBm)");
+  networks.push_back("IoT_Smart_House (-70dBm)");
+  networks.push_back("Neighbor_Network (-85dBm)");
+  return networks;
+}
 
 void setup() {
   Serial.begin(115200);
+  while(!Serial); // Ожидание подключения Serial в PuTTY
 
-  // 1. Настройка внешнего вида
-  bios.setHeaderTitle("GS32");
-  bios.setProductInfo("IoT Controller", "v1.0.2");
+  // 1. Настройка заголовков бренда
+  bios.setHeaderTitle("GS-32 PRO");
+  bios.setProductInfo("IoT Controller", "v2.5.1");
 
-  // 2. Инициализация
-  bios.begin();
+  // 2. Настройка темы оформления (6 параметров: bgWork, bgHeader, highlight, tabActive, popupBg, popupHighlight)
+  //bios.setTheme("37;44", "30;47", "30;47", "30;46", "37;40", "30;47");
 
-  // 3. Создание страниц
-  bios.addPage("General");
+  // 3. Создание страниц и иерархии (родительские страницы)
+  bios.addPage("Network");                  // Страница верхнего уровня
+  bios.addPage("Settings");                 // Страница верхнего уровня
+  bios.addPage("Tools");                    // Страница с действиями и переключением на Shell
 
-  // 4. Добавление настроек
-  bios.addText("General", "Device Name", device_name, sizeof(device_name), false);
-  bios.addBool("General", "Status LED", &led_enabled);
-  bios.addSelect("General", "Power Mode", &operation_mode, 3, modes);
+  // Страницы подменю (указываем родителя вторым параметром)
+  bios.addPage("Wi-Fi", "Network");         // Network -> Wi-Fi
+  bios.addPage("Ethernet", "Network");      // Network -> Ethernet
 
-  // 5. Настройка действий (например, сохранение)
-  bios.onSave([]() {
-    Serial.println("Сохранение настроек в память...");
-    // Тут ваш код для Preferences.h
+  // 4. Добавление пунктов-ссылок для перехода в подменю по Enter
+  bios.addSubMenuAction("Network", "Configure Wi-Fi...     ", "Wi-Fi");
+  bios.addSubMenuAction("Network", "Configure Ethernet...  ", "Ethernet");
+
+  // 5. Наполнение пунктов меню по страницам
+  // Страница: Settings
+  bios.addBool("Settings", "Enable MQTT Logs  ", &dhcpEnabled);
+  bios.addInt("Settings", "Heartbeat Interval", &channelNum, 1, 60);
+  bios.addText("Settings", "Device Hostname   ", ssidBuffer, 32, false);
+
+  // Страница: Wi-Fi (внутри Network)
+  bios.addText("Wi-Fi", "SSID Name         ", ssidBuffer, 32, false);
+  bios.addSelect("Wi-Fi", "Security Mode     ", &selectedAuthMode, 4, authModes);
+  bios.addDynamicSelect("Wi-Fi", "Select AP (Scan)  ", &selectedWifiNetwork, scanAvailableNetworks);
+
+  // Страница: Ethernet (внутри Network)
+  bios.addBool("Ethernet", "Use DHCP Client   ", &dhcpEnabled);
+  bios.addInt("Ethernet", "Static IP Octet   ", &channelNum, 1, 255);
+
+  // Страница: Tools (Демонстрация disable / enable для Shell)
+  bios.addAction("Tools", "Switch to Custom Shell  ", []() {
+    customShellMode = true;
+    bios.disable(); // Отключаем BIOS, освобождаем Serial и возвращаем видимый курсор
+    Serial.println("\n--- GS-32 Custom Shell Mode ---");
+    Serial.println("Type 'help' for commands, or type 'bios' to return.");
+    Serial.print("shell> ");
   });
+
+  // 6. Обработчики
+  bios.onSave([]() {
+    Serial.println("\n[CALLBACK] User saved settings! Writing to EEPROM/SPIFFS...");
+  });
+
+  bios.onFactoryReset([]() {
+    Serial.println("\n[CALLBACK] Factory reset triggered!");
+  });
+
+  bios.onKeyPress([](char key, const char* activePage) {
+    if (key == 'h' || key == 'H') {
+      Serial.printf("\n[HELP] Pressed 'H' on page: %s\n", activePage);
+    }
+  });
+
+  // Запуск системы
+  bios.begin();
 }
 
 void loop() {
-  bios.handle(); // Обработка интерфейса
+  // Если активирован режим кастомного Shell, обрабатываем команды вручную
+  if (customShellMode) {
+    if (Serial.available()) {
+      String cmd = Serial.readStringUntil('\n');
+      cmd.trim();
+      
+      if (cmd.equalsIgnoreCase("bios")) {
+        customShellMode = false;
+        bios.enable(); // Возвращаем управление BIOS, очищаем экран и скрываем курсор
+      } else if (cmd.equalsIgnoreCase("help")) {
+        Serial.println("Available commands: help, uptime, bios");
+      } else if (cmd.equalsIgnoreCase("uptime")) {
+        Serial.printf("Uptime: %lu seconds\n", millis() / 1000);
+      } else if (cmd.length() > 0) {
+        Serial.printf("Unknown command: '%s'. Type 'bios' to return to BIOS.\n", cmd.c_str());
+      }
+      
+      if (customShellMode) {
+        Serial.print("shell> ");
+      }
+    }
+    return;
+  }
+
+  // Обязательный вызов обработчика BIOS в штатном режиме
+  bios.handle();
 }
+
 ```
+
+## 🕹 Управление в терминале
+
+* **`←` / `→` (Стрелки влево/вправо)**: Переключение между вкладками верхнего уровня (Info, Network, Settings, Tools, Exit).
+* **`↑` / `↓` (Стрелки вверх/вниз)**: Перемещение по пунктам меню текущей страницы или элементам выпадающего списка.
+* **`Enter`**: 
+  * Открыть выбранный пункт / войти в подменю (`>>`).
+  * Переключить булев параметр (`Enabled/Disabled`).
+  * Открыть модальное окно редактирования текста или числа (`INT`).
+  * Подтвердить выбор во всплывающем списке.
+* **`Esc`**: 
+  * Закрыть модальное окно / отменить изменения.
+  * Вернуться на уровень выше из подменю.
 
 ## 🛠 Методы API
 
-### Инициализация и метаданные
-*   `void begin()` — запуск движка BIOS.
-*   `void setHeaderTitle(String title)` — текст в левом верхнем углу (шапка).
-*   `void setProductInfo(String name, String version)` — данные для вкладки Info.
+### Инициализация и настройка
+* `GS32BIOS()` — конструктор.
+* `void setHeaderTitle(const String &title)` — задает заголовок в левом углу шапки (по умолчанию `"GS-32"`).
+* `void setProductInfo(const String &name, const String &version)` — задает имя и версию продукта для системной страницы `Info`.
+* `void setTheme(const char* bgWork, const char* bgHeader, const char* highlight, const char* tabActive, const char* popupBg, const char* popupHighlight)` — настраивает цветовую палитру (ANSI-коды).
+* `void begin()` — инициализирует работу системы и отрисовывает стартовый экран.
+* `void handle()` — основной метод опроса входящих команд (вызывать в `loop()`).
 
-### Создание контента
-*   `void addPage(String name)` — создание новой вкладки.
-*   `void addInfo(String label, String value)` — статичная строка на вкладке Info.
-*   `void addText(String page, String label, char* ptr, size_t len, bool allowEmpty)` — текстовое поле.
-*   `void addBool(String page, String label, bool* ptr)` — логический переключатель.
-*   `void addSelect(String page, String label, int* ptr, int count, const char** opts)` — список выбора.
-*   `void addAction(String page, String label, function action)` — кнопка-действие.
+### Управление страницами
+* `void addPage(const String &pageName, const String &parentPage = "")` — создает страницу. Если указан `parentPage`, страница становится вложенным подменю.
+* `void addSubMenuAction(const String &pageName, const String &label, const String &targetPageName)` — создает пункт-ссылку на странице, по которому пользователь переходит в дочернее подменю по `Enter`.
 
-### Колбэки
-*   `void onSave(function cb)` — выполняется при нажатии "Save Changes and Reset".
-*   `void onFactoryReset(function cb)` — выполняется при нажатии "Factory Reset".
+### Добавление элементов управления
+* `void addInfo(const String &label, const String &value)` — информационное поле (только для чтения, обычно на странице `Info`).
+* `void addText(const String &pageName, const String &label, char* valPtr, size_t maxLen, bool allowEmpty = true)` — редактируемое текстовое поле.
+* `void addInt(const String &pageName, const String &label, int* valPtr, int minVal, int maxVal)` — числовое поле с модальным вводом и проверкой лимитов.
+* `void addBool(const String &pageName, const String &label, bool* valPtr)` — переключатель состояний (`true / false`).
+* `void addSelect(const String &pageName, const String &label, int* valPtr, int optionsCount, const char** options)` — выпадающий список вариантов.
+* `void addDynamicSelect(const String &pageName, const String &label, int* valPtr, std::function<std::vector<String>()> fetchOptionsFunc)` — динамический список, генерируемый функцией «на лету» (например, для сканирования сетей).
+* `void addAction(const String &pageName, const String &label, std::function<void()> action)` — кнопка-действие, выполняющая переданную лямбда-функцию.
+
+### Интеграция с Callbacks
+* `void enable()` — включает обработку BIOS и выводит интерфейс в терминал.
+* `void disable()` — выключает обработку BIOS, освобождая Serial-порт для внешних задач.
+* `bool isActive()` — возвращает текущий статус активности BIOS.
+* `void onSave(std::function<void()> callback)` — callback при выборе стандартного действия сохранения.
+* `void onFactoryReset(std::function<void()> callback)` — callback при сбросе к заводским настройкам.
+* `void onKeyPress(std::function<void(char, const char*)> callback)` — перехватчик нажатий клавиш (возвращает символ и имя активной страницы).
+
+## 🎨 Темы оформления (ANSI цвета)
+
+Метод `setTheme()` принимает строки с ANSI-кодами форматирования (цвет текста и фона через точку с запятой `;`):
+* `bgWork` — фон рабочей зоны (например, `"37;44"` — белый текст на синем фоне).
+* `bgHeader` — фон шапки (`"30;47"` — черный текст на белом фоне).
+* `highlight` — подсветка выбранной строки меню.
+* `tabActive` — цвет активной вкладки в шапке.
+* `popupBg` — фон всплывающего окона
+* `popupHighlight` — подсветка пункта в всплывающем окне.
 
 ## 📝 Требования
 *   Плата: **ESP32** (любая версия).
 *   Терминал: Любой с поддержкой **ANSI/VT100** (Putty, TeraTerm, встроенный монитор порта VS Code/PlatformIO). 
-    *   *Примечание: Стандартный монитор порта Arduino IDE до версии 2.0 плохо поддерживает ANSI-цвета.*
+    *   *Примечание: Стандартный монитор порта Arduino IDE не поддерживает ANSI-цвета.*
 
 ## Лицензия
 MIT Лицензия. Используйте в любых проектах!

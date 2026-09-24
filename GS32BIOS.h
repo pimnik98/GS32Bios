@@ -1,96 +1,127 @@
-#ifndef GS32_BIOS_H
-#define GS32_BIOS_H
+#ifndef GS32BIOS_H
+#define GS32BIOS_H
 
 #include <Arduino.h>
-#include <esp_system.h>
 #include <vector>
 #include <functional>
 
-enum ItemType { 
-  TYPE_INFO, 
-  TYPE_TEXT, 
-  TYPE_INT, 
-  TYPE_BOOL, 
-  TYPE_SELECT, 
-  TYPE_ACTION 
+enum MenuItemType {
+  TYPE_INFO,
+  TYPE_TEXT,
+  TYPE_INT,
+  TYPE_BOOL,
+  TYPE_SELECT,
+  TYPE_DYNAMIC_SELECT,
+  TYPE_ACTION,
+  TYPE_SUBMENU_LINK
 };
 
 struct MenuItem {
-  String page;       
-  String label;   
-  ItemType type;       
-  void* valPtr;        
-  int maxOptions;      
-  int minVal;          
-  int maxVal;          
-  std::function<void()> action;    
+  String page;
+  String label;
+  MenuItemType type;
+  void* valPtr;
+  int minVal;
+  int maxVal;
+  int maxOptions;
   const char** options;
-  size_t maxLen;       // Максимальная длина строки для TYPE_TEXT
-  bool allowEmpty;     // Разрешено ли сохранять пустую строку
+  std::function<std::vector<String>()> dynamicOptionsFunc;
+  std::function<void()> action;
+  size_t maxLen;
+  bool allowEmpty;
+  String targetPage;
 };
 
 class GS32BIOS {
 public:
   GS32BIOS();
-  
-  // Инициализация (чисто локальная, без Wi-Fi и серверов)
+  ~GS32BIOS();
+
   void begin();
   void handle();
+  void enable();
+  void disable();
 
-  // Брендинг и метаданные
   void setHeaderTitle(const String &title);
   void setProductInfo(const String &name, const String &version);
+  void setTheme(const char* bgWork, const char* bgHeader,
+                const char* highlight, const char* tabActive,
+                const char* popupBg, const char* popupHighlight);
 
-  // Управление страницами и пунктами меню
-  void addPage(const String &pageName);
+  void addPage(const String &pageName, const String &parentPage = "");
+  void addSubMenuAction(const String &pageName, const String &label, const String &targetPageName);
   void addInfo(const String &label, const String &value);
-  void addText(const String &pageName, const String &label, char* valPtr, size_t maxLen, bool allowEmpty = false);
+  void addText(const String &pageName, const String &label, char* valPtr, size_t maxLen, bool allowEmpty = true);
   void addInt(const String &pageName, const String &label, int* valPtr, int minVal, int maxVal);
   void addBool(const String &pageName, const String &label, bool* valPtr);
   void addSelect(const String &pageName, const String &label, int* valPtr, int optionsCount, const char** options);
+  void addDynamicSelect(const String &pageName, const String &label, int* valPtr, std::function<std::vector<String>()> fetchOptionsFunc);
   void addAction(const String &pageName, const String &label, std::function<void()> action);
 
-  // События (Callback)
   void onSave(std::function<void()> callback);
   void onFactoryReset(std::function<void()> callback);
+  void onKeyPress(std::function<void(char, const char*)> callback);
+
+  struct PageNode {
+    String name;
+    String parent;
+    bool isSubmenu;
+  };
+
+  struct ThemeConfig {
+    const char* bgWork;
+    const char* bgHeader;
+    const char* highlight;
+    const char* tabActive;
+    const char* popupBg;
+    const char* popupHighlight;
+  };
 
 private:
   String headerTitle;
   String productName;
   String productVersion;
+  ThemeConfig theme;
 
-  std::vector<String> pages;
+  std::vector<PageNode> pages;
   std::vector<MenuItem> menuItems;
 
   int currentPageIdx;
   int activeItemIndex;
   int localActiveIndex;
-  
   bool isEditing;
   bool isSubMenuOpen;
   int subMenuSelectionIndex;
-  String inputBuffer;
-  char originalTextValue[64]; // Буфер для восстановления при Esc
 
-  // Системные строки (только память и аптайм, без Wi-Fi)
+  String inputBuffer;
+  char originalTextValue[64];
+  int originalIntValue;
+
+  std::vector<String> activeSubmenuPath;
+  int currentNavDepth;
+  bool _isActive;
+
+  std::function<void()> saveCallback;
+  std::function<void()> resetCallback;
+  std::function<void(char, const char*)> keyPressCallback;
+
   char sys_chip_model[32];
   char sys_flash_size[16];
   char sys_free_ram[16];
   char sys_uptime[16];
 
-  std::function<void()> saveCallback;
-  std::function<void()> resetCallback;
-
   void updateSystemStats();
+  std::vector<PageNode> getCurrentLevelPages();
   void updateActiveIndex();
   void moveActiveItem(int dir);
-  
-  void renderMenu(Stream &client);
-  void handleInput(Stream &client);
-  
+
   void setCursor(Stream &c, int r, int col);
   void setColors(Stream &c, const char* code);
   void drawRect(Stream &c, int sr, int sc, int h, int w, const char* clr);
+  void drawBoxBorder(Stream &client, int br, int bc, int bw, int bh);
+  void renderMenu(Stream &client);
+  void handleInput(Stream &client);
+  bool inputLevelCheckEmpty(MenuItem *it, const String &buf);
 };
 
 #endif

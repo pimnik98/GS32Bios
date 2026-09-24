@@ -5,9 +5,9 @@
 ![Интерфейс](https://dev.piminoff.ru/img/github/UI-Terminal-blue.svg) ![Платформа](https://dev.piminoff.ru/img/github/Platform-ESP32-orange.svg)
 
 ## Скриншоты
-![ГлавноеОкно](https://dev.piminoff.ru/img/github/GS32Bios/1.png)
-![Редактирование](https://dev.piminoff.ru/img/github/GS32Bios/2.png)
-![Выбор](https://dev.piminoff.ru/img/github/GS32Bios/3.png)
+![ГлавноеОкно](https://dev.piminoff.ru/img/github/GS32Bios/1.png?v1.1)
+![Редактирование](https://dev.piminoff.ru/img/github/GS32Bios/2.png?v1.1)
+![Выбор](https://dev.piminoff.ru/img/github/GS32Bios/3.png?v1.1)
 
 ## ✨ Особенности
 
